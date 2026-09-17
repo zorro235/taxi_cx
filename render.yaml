@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: taxi-telegram-final
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taxi-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: TELEGRAM_PAYMENT_PROVIDER_TOKEN
+        sync: false
+      - key: PAYMENT_CURRENCY
+        value: RUB
+      - key: COMMISSION_RATE
+        value: "0.10"
+      - key: INIT_DATA_MAX_AGE
+        value: "3600"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: TBANK_TERMINAL_KEY
+        sync: false
+      - key: TBANK_PASSWORD
+        sync: false
+      - key: TBANK_API_URL
+        value: https://securepay.tinkoff.ru/v2
+databases:
+  - name: taxi-db
+    plan: free
