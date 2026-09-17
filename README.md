@@ -25,3 +25,7 @@
 Водитель видит задолженность, нажимает «Оплатить через СБП», выбирает банк из списка Т-Банка, после чего получает индивидуальный SBP deeplink. Сервер хранит `commission_payments` и принимает уведомления Т-Банка; после подтвержденной оплаты долг уменьшается, а блокировка снимается автоматически.
 
 Для production нужны `TBANK_TERMINAL_KEY` и `TBANK_PASSWORD`, выданные для терминала интернет-эквайринга Т-Банка, а `PUBLIC_BASE_URL` должен быть публичным HTTPS-адресом. Уведомление Т-Банка должно приходить на `/api/tbank/notification`.
+
+
+## Single-service Render mode
+This build does not require a separate Render PostgreSQL service. If `DATABASE_URL` is absent, the backend automatically uses SQLite at `/app/data/taxi.db` and creates the database on first start. On Render, the default filesystem is ephemeral; for persistent production data, attach a persistent disk to `/app/data` or later configure an external/managed database.

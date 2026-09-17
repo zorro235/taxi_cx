@@ -8,10 +8,6 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: taxi-db
-          property: connectionString
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ADMIN_TELEGRAM_IDS
@@ -34,6 +30,3 @@ services:
         sync: false
       - key: TBANK_API_URL
         value: https://securepay.tinkoff.ru/v2
-databases:
-  - name: taxi-db
-    plan: free

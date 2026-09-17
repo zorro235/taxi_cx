@@ -1,6 +1,7 @@
 import os, json, hashlib, hmac, math, uuid, asyncio, platform
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qsl
+import re
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -11,9 +12,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy import text
+from sqlalchemy import text as _sql_text
 
-DATABASE_URL=os.getenv('DATABASE_URL','postgresql+asyncpg://taxi:CHANGE_ME@db:5432/taxi')
+DATABASE_URL=os.getenv('DATABASE_URL','').strip()
+if not DATABASE_URL:
+    DATABASE_URL='sqlite+aiosqlite:////app/data/taxi.db' if os.path.isdir('/app') else 'sqlite+aiosqlite:///./data/taxi.db'
+SQLITE=DATABASE_URL.startswith('sqlite+')
+if SQLITE:
+    os.makedirs('/app/data' if os.path.isdir('/app') else './data', exist_ok=True)
 BOT_TOKEN=os.getenv('TELEGRAM_BOT_TOKEN','')
 COMMISSION_RATE=Decimal(os.getenv('COMMISSION_RATE','0.10'))
 INIT_DATA_MAX_AGE=int(os.getenv('INIT_DATA_MAX_AGE','3600'))
@@ -28,7 +34,7 @@ TBANK_WEBHOOK_SECRET=os.getenv('TBANK_WEBHOOK_SECRET','')
 MEDIA_DIR=os.getenv('MEDIA_DIR','/app/media')
 FRONTEND_DIR=os.getenv('FRONTEND_DIR','/app/frontend')
 os.makedirs(MEDIA_DIR,exist_ok=True)
-engine=create_async_engine(DATABASE_URL,pool_pre_ping=True,pool_recycle=1800)
+engine=create_async_engine(DATABASE_URL, pool_pre_ping=not SQLITE, pool_recycle=1800 if not SQLITE else -1)
 Session=async_sessionmaker(engine,expire_on_commit=False)
 app=FastAPI(title='Taxi Telegram Mini App',version='3.0.0')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv('CORS_ORIGINS','*').split(',') if x.strip()],allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['Content-Type','X-Telegram-Init-Data'])
@@ -102,9 +108,29 @@ async def require_admin(init_data):
     if u['telegram_id'] not in ADMIN_TELEGRAM_IDS: raise HTTPException(403,'Developer access denied')
     return u
 
+def db_sql(sql:str)->str:
+    if not SQLITE:
+        return sql
+    # PostgreSQL syntax used by the app, normalized for SQLite single-service mode.
+    sql=re.sub(r'\s+FOR UPDATE(?:\s+OF\s+[^;]+)?', '', sql, flags=re.I)
+    sql=sql.replace('now()', 'CURRENT_TIMESTAMP')
+    sql=sql.replace('NOW()', 'CURRENT_TIMESTAMP')
+    sql=sql.replace('TIMESTAMPTZ','TEXT').replace('JSONB','TEXT')
+    sql=sql.replace('DOUBLE PRECISION','REAL').replace('BOOLEAN','INTEGER')
+    sql=re.sub(r'NUMERIC\(\d+,\d+\)', 'NUMERIC', sql)
+    sql=re.sub(r'\bBIGINT\b','INTEGER',sql)
+    sql=re.sub(r'\bBIGSERIAL\s+PRIMARY KEY','INTEGER PRIMARY KEY AUTOINCREMENT',sql,flags=re.I)
+    sql=re.sub(r'\bINT\b','INTEGER',sql)
+    sql=re.sub(r'ALTER TABLE\s+commission_payments\s+ADD COLUMN IF NOT EXISTS[^;]+;?', '', sql, flags=re.I)
+    sql=re.sub(r'GREATEST\(([^,]+),\s*0\)', r'MAX(\1,0)', sql, flags=re.I)
+    return sql
+
+
+def text(sql, *args, **kwargs):
+    return _sql_text(db_sql(sql), *args, **kwargs)
 async def init_db():
     async with engine.begin() as c:
-        await c.execute(text('''
+        await c.execute(text(db_sql('''
 CREATE TABLE IF NOT EXISTS users(
  id BIGSERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, role TEXT CHECK(role IN ('passenger','driver')),
  driver_status TEXT NOT NULL DEFAULT 'NONE' CHECK(driver_status IN ('NONE','PENDING','APPROVED','REJECTED')),
@@ -140,7 +166,7 @@ ALTER TABLE commission_payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE commission_payments ADD COLUMN IF NOT EXISTS provider_payload JSONB;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_commission_provider_payment ON commission_payments(provider,provider_payment_id) WHERE provider_payment_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status,created_at);CREATE INDEX IF NOT EXISTS idx_offers_order_status ON offers(order_id,status);CREATE INDEX IF NOT EXISTS idx_messages_order_created ON messages(order_id,created_at);CREATE INDEX IF NOT EXISTS idx_locations_updated ON driver_locations(updated_at);CREATE INDEX IF NOT EXISTS idx_users_driver_online ON users(role,driver_status,online);
-'''))
+''')))
 
 async def weekly_commission_cycle():
     while True:
@@ -331,7 +357,11 @@ async def driver_location(driver_id:int,x_telegram_init_data:str=Header(default=
             if not ok: raise HTTPException(403,'Location access denied')
         r=await s.execute(text('SELECT lat,lng,speed,course,accuracy,updated_at FROM driver_locations WHERE driver_id=:d'),{'d':driver_id});row=r.mappings().first()
         if not row: raise HTTPException(404,'Location unavailable')
-        if row['updated_at'] < datetime.now(timezone.utc)-timedelta(minutes=2): raise HTTPException(410,'Location is stale')
+        updated_at=row['updated_at']
+        if SQLITE and isinstance(updated_at,str):
+            try: updated_at=datetime.fromisoformat(updated_at.replace('Z','+00:00')).replace(tzinfo=timezone.utc)
+            except ValueError: updated_at=datetime.now(timezone.utc)
+        if updated_at < datetime.now(timezone.utc)-timedelta(minutes=2): raise HTTPException(410,'Location is stale')
         return dict(row)
 
 TRANS={
