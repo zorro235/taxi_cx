@@ -1,31 +1,71 @@
-# Taxi Telegram Mini App v3
+# Taxi Telegram Mini App v4
 
-Полноценный production-oriented MVP: пассажир, водитель, разработчик, live GPS, профили, история маршрутов, рейтинг, чат, 10% недельная комиссия, Telegram payment invoice для физической услуги.
+Server-rendered Telegram Mini App for a taxi MVP: passenger/driver roles, driver approval, orders, driver offers, live GPS, profiles, trip statuses, chat, ratings, trip history, cash/Telegram payments, driver commission and admin dashboard.
 
-## Важно
-Оплата подключается через Telegram Bot Payments для физических услуг и требует provider token от выбранного платёжного провайдера. Без этого приложение работает, но online payment endpoint возвращает 503; наличные доступны.
+## Architecture
 
-## Запуск
-1. Скопировать `.env.example` в `.env` и заполнить секреты.
-2. `docker compose up --build`
-3. HTTPS нужен для Telegram Mini App в production.
-4. В BotFather назначить Main Mini App на HTTPS URL.
-5. `ADMIN_TELEGRAM_IDS` — Telegram ID разработчика. Это вход без пароля через проверенную Telegram identity.
-6. Для оплаты заполнить `TELEGRAM_PAYMENT_PROVIDER_TOKEN`.
+- One Render Web Service.
+- FastAPI + Uvicorn.
+- SQLite database stored at `/app/storage/taxi.db`.
+- Uploaded profile media stored at `/app/storage/media`.
+- No separate PostgreSQL service is required for this single-service build.
+- The application does not expose FastAPI/OpenAPI documentation in production.
 
-## Developer
-Открой Mini App с `?developer=1`. Сервер всё равно проверяет Telegram ID в `ADMIN_TELEGRAM_IDS`; параметр сам по себе доступа не даёт.
+## Required Render environment variables
 
-## Uber-подобная логика
-Заказ → предложения водителей → выбор → ETA/GPS → статусы → поездка → оплата → рейтинг. Реализованы принципы, а не копирование кода/закрытой реализации Uber.
+```text
+TELEGRAM_BOT_TOKEN=...
+ADMIN_TELEGRAM_IDS=...
+PUBLIC_BASE_URL=https://your-service.onrender.com
+```
 
+Optional payment variables:
 
-## T-Bank / SBP комиссия водителей
+```text
+TELEGRAM_PAYMENT_PROVIDER_TOKEN=...
+TBANK_TERMINAL_KEY=...
+TBANK_PASSWORD=...
+TBANK_API_URL=https://securepay.tinkoff.ru/v2
+COMMISSION_RATE=0.10
+PAYMENT_CURRENCY=RUB
+INIT_DATA_MAX_AGE=3600
+```
 
-Водитель видит задолженность, нажимает «Оплатить через СБП», выбирает банк из списка Т-Банка, после чего получает индивидуальный SBP deeplink. Сервер хранит `commission_payments` и принимает уведомления Т-Банка; после подтвержденной оплаты долг уменьшается, а блокировка снимается автоматически.
+The Telegram bot token is never stored in the repository.
 
-Для production нужны `TBANK_TERMINAL_KEY` и `TBANK_PASSWORD`, выданные для терминала интернет-эквайринга Т-Банка, а `PUBLIC_BASE_URL` должен быть публичным HTTPS-адресом. Уведомление Т-Банка должно приходить на `/api/tbank/notification`.
+## Render settings
 
+Use a **Web Service** with the repository root as the root directory. Do not set the root directory to `frontend`.
 
-## Single-service Render mode
-This build does not require a separate Render PostgreSQL service. If `DATABASE_URL` is absent, the backend automatically uses SQLite at `/app/data/taxi.db` and creates the database on first start. On Render, the default filesystem is ephemeral; for persistent production data, attach a persistent disk to `/app/data` or later configure an external/managed database.
+The root `Dockerfile` starts:
+
+```text
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+The application serves the frontend and `/api/*` endpoints from the same service.
+
+## Health check
+
+```text
+/health
+/api/health
+```
+
+Expected response:
+
+```json
+{"ok":true,"version":"4.1.0"}
+```
+
+## Persistence
+
+SQLite is used deliberately so the application can start with only one Render Web Service. Render's ordinary filesystem is ephemeral. This version is prepared for one Render Persistent Disk mounted at `/app/storage`; both SQLite and uploaded media live under that mount. See `RENDER_DISK_SETUP_RU.md`. A managed database is the next step before multi-instance scaling.
+
+## Telegram authentication
+
+Every application API call that handles user data requires Telegram `initData`. The server verifies Telegram's HMAC signature and `auth_date`; the client cannot manufacture an authenticated user by changing browser JavaScript.
+
+## Payments
+
+Cash works without a payment-provider credential. Online passenger payment requires a Telegram Bot Payments provider token. Driver commission SBP requires a configured T-Bank internet-acquiring terminal and is intentionally disabled until those credentials exist.

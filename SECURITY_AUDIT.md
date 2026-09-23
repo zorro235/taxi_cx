@@ -1,16 +1,26 @@
-# Security audit v3
+# Security audit — Taxi CX 5.0
 
-- Telegram initData HMAC verification and auth_date expiry.
-- Developer access is server-side Telegram-ID allowlist; `?developer=1` is only a UI switch.
-- Driver must be APPROVED, online and unblocked to receive/offer trips.
-- Price >= 100 is enforced by Pydantic and DB CHECK.
-- Order/offer acceptance uses row locks.
-- Participant checks protect trip chat and driver location.
-- Driver GPS older than 2 minutes is rejected as stale.
-- Uploaded profile images are MIME allowlisted and limited to 3 MB, stored under generated UUID filenames.
-- User text is HTML-escaped in frontend.
-- Payment completion is trusted only after Telegram sends successful_payment to the webhook; pre-checkout alone never marks paid.
-- Payment payload is unique and tied to one order.
-- CORS has no credentials.
+## Checked
+- Telegram Mini App `initData`: HMAC verification, 10 KB size cap, expiry/future-date checks, user JSON validation.
+- Admin authorization: Telegram-ID allow-list; admin actions are written to `admin_actions`.
+- Driver authorization: only APPROVED + unblocked + online drivers can accept orders, send GPS, or toggle line status.
+- Manual block/unblock: explicit boolean action. Unblock clears `commission_balance` to zero and marks pending/created commission payments as `WAIVED`.
+- Race condition on offer acceptance: order status is checked atomically; inactive offers return 409.
+- Order participant checks for order details, chat and driver location.
+- Uploads: JPEG/PNG/WebP MIME and file-signature checks, 3 MB cap, UUID object names.
+- Supabase Secret Key is server-only and never put into frontend code.
+- FastAPI docs/OpenAPI are disabled.
+- Security headers are set by middleware.
+- Payment webhooks verify provider signatures and reject waived commission payments.
+- SQLite remains only as a local-development fallback; Render production must use PostgreSQL + Supabase Storage.
 
-Production requirements: HTTPS, strong DB password, reverse-proxy rate limiting, backups, monitoring, payment-provider credentials, Telegram webhook configuration, and local legal/driver verification requirements.
+## Tests executed
+- 20 test scenarios.
+- Entire 20-scenario suite repeated 20 times: **400 scenario executions, all passed**.
+- Python compilation passed.
+- Frontend JavaScript syntax check passed.
+- Static security checks passed.
+
+## Limits of verification
+- This environment has no outbound DNS/network and no local PostgreSQL server/psycopg wheel, so a real connection to a user's Supabase project and real Telegram/T-Bank requests could not be executed here.
+- Therefore this audit does not claim a live Supabase deployment was verified. The Render deployment must be tested after the user's Supabase credentials are added.
