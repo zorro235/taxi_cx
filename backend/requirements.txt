@@ -5,3 +5,4 @@ psycopg[binary]==3.2.9
 python-multipart==0.0.20
 httpx==0.28.1
 pydantic==2.11.7
+psycopg2-binary
